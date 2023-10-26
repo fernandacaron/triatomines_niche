@@ -2,45 +2,28 @@ rm(list = ls())
 
 setwd("~/Documents/lab/triatomines")
 
-#library(rnaturalearth)
-#library(rnaturalearthdata)
-#library(ggspatial)
-#library(sf)
-#library(jsonlite)
-#library(mapdata)
 library(raster)
-#library(mapview)
-#library(ggplot2)
+library(ggplot2)
 library(dplyr)
-#library(maptools)
-#library(rgdal)
-#library(scrubr)
 library(tidymodels)
 library(tidyverse)
-#library(purrr)
 library(dismo)
-#library(stringr)
 library(rgbif)
 library(tmap)
-#library(hypervolume)
 library(CoordinateCleaner)
 library(stringi)
+library(phytools)
+library(rnaturalearth)
+library(patchwork)
+library(viridis)
+library(correlation)
+library(phylosignal)
+library(phylobase)
+library(caper)
 
 data <- read.csv("data/MasterTable11.csv", strip.white = TRUE, 
                  na.strings = c("", "NA"), stringsAsFactors = TRUE)
-
-# species that cannot be used to calculate niche
-subdat <- data.frame(KBGenus_Sp = c("Triatoma longipennis", 
-                                    "Triatoma gusayana", 
-                                    "Triatoma phyllosoma", 
-                                    "Triatoma petrocchiae",
-                                    "Psammolestes tertius",
-                                    "Psammolestes coreodes", 
-                                    "Rhodnius NA", 
-                                    "Triatoma melanica"))
-
-# dropping those factor levels
-finaldt  <- data %>% anti_join(., subdat) %>% droplevels()
+data$KBTribe[data$KBGenus_Sp == "Rhodnius ecuadoriensis"] <- "Rhodniini"
 
 # function to fix names
 fix_species_name <- function(column) {
@@ -50,27 +33,26 @@ fix_species_name <- function(column) {
 }
 
 # host
-finaldt$Host_Genus_sp <- str_replace(as.character(finaldt$Host_Genus_sp), "NA NA", 'NA')
-finaldt$Host_Genus_sp <- str_replace(as.character(finaldt$Host_Genus_sp), "(?s) NA", " sp")
-finaldt$Host_Genus_sp[which(finaldt$Host_Genus_sp == "NA rattus")] <- "Rattus rattus"
-finaldt$Host_Genus_sp[which(finaldt$Host_Genus_sp == "Felis spp.")] <- "Felis sp"
-finaldt$Host_Genus_sp <- as.factor(finaldt$Host_Genus_sp)
-finaldt$Host_Genus_sp[which(finaldt$Host_Genus_sp == "NA")] <- NA
-finaldt$Host_genus[which(is.na(finaldt$Host_genus) & !is.na(finaldt$Host_Genus_sp))] <- "Rattus"
+data$Host_Genus_sp <- str_replace(as.character(data$Host_Genus_sp), "NA NA", 'NA')
+data$Host_Genus_sp <- str_replace(as.character(data$Host_Genus_sp), "(?s) NA", " sp")
+data$Host_Genus_sp[which(data$Host_Genus_sp == "NA rattus")] <- "Rattus rattus"
+data$Host_Genus_sp[which(data$Host_Genus_sp == "Felis spp.")] <- "Felis sp"
+data$Host_Genus_sp <- as.factor(data$Host_Genus_sp)
+data$Host_Genus_sp[which(data$Host_Genus_sp == "NA")] <- NA
+data$Host_genus[which(is.na(data$Host_genus) & !is.na(data$Host_Genus_sp))] <- "Rattus"
 
 # bugs
-finaldt$KBGenus_Sp <- str_replace(as.character(finaldt$KBGenus_Sp), "NA NA", 'NA')
-finaldt$KBGenus_Sp <- str_replace(as.character(finaldt$KBGenus_Sp), "(?s) NA", " sp")
-finaldt$KBGenus_Sp <- as.factor(finaldt$KBGenus_Sp)
+data$KBGenus_Sp <- str_replace(as.character(data$KBGenus_Sp), "NA NA", 'NA')
+data$KBGenus_Sp <- str_replace(as.character(data$KBGenus_Sp), "(?s) NA", " sp")
+data$KBGenus_Sp <- as.factor(data$KBGenus_Sp)
 
 # country 
-finaldt$Country <- str_replace(as.character(finaldt$Country), "Panamá", "Panama")
-finaldt$Country <- str_replace(as.character(finaldt$Country), "Guyana Francesa", "French Guiana")
-finaldt <- finaldt[!grepl("Trinidad and Tobago", finaldt$Country), ]
+data$Country <- str_replace(as.character(data$Country), "Panamá", "Panama")
+data$Country <- str_replace(as.character(data$Country), "Guyana Francesa", "French Guiana")
 
 # estimating species-level and genus-level DBR for each species
 # with NAs 
-dietbreadthdt <- finaldt %>% 
+dietbreadthdt <- data %>% 
   dplyr::select(KBTribe:Country, Lat:Host_genus, N_feeds) %>%
   group_by(KBTribe, KBGenus_Sp, KBGenus) %>% 
   summarise(speciesDBR = n_distinct(Host_Genus_sp, na.rm = FALSE),
@@ -81,7 +63,7 @@ dietbreadthdt <- finaldt %>%
   ungroup()
 
 # without NAs
-dietbreadthdtnoNA <- finaldt %>% 
+dietbreadthdtnoNA <- data %>% 
   dplyr::select(KBTribe:Country, Lat:Host_genus, N_feeds) %>%
   group_by(KBTribe, KBGenus_Sp, KBGenus) %>% 
   summarise(speciesDBR = n_distinct(Host_Genus_sp, na.rm = TRUE),
@@ -99,7 +81,7 @@ dietbreadthdt_clean <- dietbreadthdt %>% ungroup() %>%
                 familyDBR,
                 orderDBR,
                 classDBR) %>%
-  na.omit() %>% filter(species != "Triatoma rubrofasciata")
+  na.omit() #%>% filter(species != "Triatoma rubrofasciata")
 
 dietbreadthdtnoNA_clean <- dietbreadthdtnoNA %>% ungroup() %>% 
   dplyr::select(species = KBGenus_Sp,
@@ -108,67 +90,78 @@ dietbreadthdtnoNA_clean <- dietbreadthdtnoNA %>% ungroup() %>%
                 familyDBR,
                 orderDBR,
                 classDBR) %>%
-  na.omit() %>% filter(species != "Triatoma rubrofasciata")
+  na.omit() #%>% filter(species != "Triatoma rubrofasciata")
 
 genus_name_unique <- as.list(unique(sub('(^\\w+)\\s.+', '\\1', dietbreadthdt$KBGenus_Sp)))
 species_name_unique <- as.list(unique(sub('(^\\w+)\\s(+)', '\\2', dietbreadthdt$KBGenus_Sp)))
 species_name_unique <- unique(levels(dietbreadthdt$KBGenus_Sp))
 
-# defininig the extent of latin america for cropping later
-LatAmextent <- raster::extent(-125, -28, -70, 48) 
-# same here, but with different name
-LatAm.ext <- raster::extent(-125, -28, -70, 48)
-
-gbif_taxon_keys <- as.character()
-for (i in 1:length(species_name_unique)) {
-  gbif_taxon_keys[i] <- name_backbone(species_name_unique[i])$usageKey
+gbif_taxon_keys <- matrix(ncol = 2, nrow = length(species_name_unique))
+gbif_taxon_keys[, 1] <- species_name_unique
+for (i in 1:nrow(gbif_taxon_keys)) {
+  try(
+   gbif_taxon_keys[i, 2] <- name_backbone(gbif_taxon_keys[i, 1])$speciesKey
+  )
 }
+gbif_taxon_keys <- gbif_taxon_keys[complete.cases(gbif_taxon_keys[, 2]), ]
 
-gbif_data <- occ_download(pred_in("taxonKey", gbif_taxon_keys),
-                          pred("hasGeospatialIssue", FALSE),
-                          pred("hasCoordinate", TRUE),
-                          pred_not(pred_in("basisOfRecord", "FOSSIL_SPECIMEN")),
-                          format = "SIMPLE_CSV")
+gbif_downloads <- c()
+syn <- list()
+for (i in 1:nrow(gbif_taxon_keys)) {
+  gbif_data <- occ_download(pred("taxonKey", gbif_taxon_keys[i, 2]),
+                                 pred("hasGeospatialIssue", FALSE),
+                                 pred("hasCoordinate", TRUE),
+                                 pred_not(pred_in("basisOfRecord", "FOSSIL_SPECIMEN")),
+                                 format = "SIMPLE_CSV")
 
-gbif_download <- gbif_data %>%
-  occ_download_get() %>%
-  occ_download_import() %>%
-  setNames(tolower(names(.))) %>% # set lowercase column names to work with CoordinateCleaner
-  cc_sea() %>% # remove from ocean 
-  cc_val() %>%
-  cc_zero() %>%
-  glimpse() # look at results of pipeline
+  occ_download_wait(gbif_data[1])
 
-# subsetting to only include species which we have the Diet Breadth
-gbif_data_clean <- gbif_download[gbif_download$species %in% species_name_unique,]
+  gbif_download <- gbif_data %>%
+    occ_download_get() %>%
+    occ_download_import() %>%
+    setNames(tolower(names(.))) %>% # set lowercase column names to work with CoordinateCleaner
+    cc_sea() %>% # remove from ocean 
+    cc_val() %>%
+    cc_zero() %>%
+    glimpse()
+
+  gbif_data_clean <- gbif_download %>% 
+    dplyr::select(longitude = decimallongitude, latitude = decimallatitude, 
+                  genus, species, country = countrycode, occurrencestatus,
+                  basisofrecord, coordinateprecision, 
+                  coordinateuncertaintyinmeters)
+
+  syn[[i]] <- unique(gbif_data_clean$species)
+
+  gbif_data_clean$species <- gbif_taxon_keys[i, 1]
+
+  gbif_downloads <- bind_rows(gbif_downloads, gbif_data_clean)
+
+}
+#save(gbif_downloads, file = "data/gbif_downloads.RData")
+
+# subsetting to only include species which we have the diet breadth
+gbif_data_clean2 <- gbif_downloads[gbif_downloads$species %in% species_name_unique, ]
+
+# subsetting to only include species in the countries of America's
+gbif_data_clean2 <- gbif_data_clean2[!(gbif_data_clean2$country %in% c("CN", "ID", "IN", "LK", "PH", "VN")), ]
 
 # selecting the variables 
-gbif_data_clean <- gbif_data_clean %>% dplyr::select(longitude = decimallongitude, latitude = decimallatitude, genus, species, country = countrycode)
+gbif_data_clean2 <- gbif_data_clean2 %>% dplyr::select(longitude, latitude, 
+  genus, species, country)
 
 # need to remove all NA's or function will not work
-gbif_data_clean2 <- na.omit(gbif_data_clean) %>% droplevels(.)
+gbif_data_clean2 <- na.omit(gbif_data_clean2) %>% droplevels(.)
 
 write.csv(gbif_data_clean2, "data/Full_GBIF_data.csv")
-#gbif_data_clean2 <- read.csv("data/Full_GBIF_data.csv")
+#gbif_data_clean2 <- read.csv("data/Full_GBIF_data.csv") 
 
 # species into polygons
-# now let's make our spatial data object just as we did in the last lesson
-spatialdt <- SpatialPoints(coords = cbind(gbif_data_clean2$longitude, 
-                                          gbif_data_clean2$latitude),
-                           proj4string = CRS("+init=epsg:4326"))
-spatialdt$species <- gbif_data_clean2$species
-spatialdt$country <- gbif_data_clean2$country
-
-# obtaining environmental data 
-mlong <- mean(spatialdt@coords[,1])
-mlat <- mean(spatialdt@coords[,2])
 # query current environmental data for our location
-clim.current <- getData("worldclim", var = "bio", res = 10, lat = mlat, 
-                        lon = mlong)
+clim.current <- raster::getData("worldclim", var = "bio", res = 10)
 
-# crop environmental variable extents
-LatAm_clim <- crop(clim.current, LatAmextent)
-LatAm_clim_df <- raster::extract(LatAm_clim, LatAmextent)
+# raster with the same dimensions as above
+r <- raster(nrows = 900, ncols = 2160, ymn = -60, vals = 1:(2160*900))
 
 # SDM modelling 
 sdm_rf_manual <- function(data, 
@@ -303,7 +296,7 @@ sdm_rf_manual <- function(data,
   sdm_spatial$pred_prob <- species_dist_final$.pred_1
   
   outputlist <- list(input = sp.occ,
-                     final_model = final_modsujarel,
+                     final_model = final_model,
                      model_performance = test_performance,
                      spatial_output_presence = sdm_spatial,
                      spatial_observed_data = spatial_presence)
@@ -312,24 +305,19 @@ sdm_rf_manual <- function(data,
 
 }
 
-# 54.1124 mins
-a <- Sys.time()
+# DO NOT RUN! too long (1.438433 hours) load data above:
 sdm_model_fulldt <- gbif_data_clean2 %>% 
   select(-country) %>% 
   nest(data = -species) %>%
-  mutate(sdm = map(data, ~sdm_rf_manual(.x))) 
-b <- Sys.time()
-b-a
-#There were issues with some computations   A: x1
-#There were issues with some computations   A: x4
-#There were issues with some computations   A: x2
-#There were issues with some computations   A: x3
-#There were issues with some computations   A: x2
-#There were issues with some computations   A: x3
-#There were issues with some computations   A: x1
-#There were issues with some computations   A: x3
-#There were issues with some computations   A: x1
-#There were issues with some computations   A: x8
+  mutate(sdm = purrr::map(data, ~sdm_rf_manual(.x))) 
+    #There were issues with some computations   A: x7
+    #There were issues with some computations   A: x5
+    #There were issues with some computations   A: x3
+    #There were issues with some computations   A: x1
+    #There were issues with some computations   A: x1
+
+#save(sdm_model_fulldt, file = "data/sdm_model_fulldt.RData")
+#load(file = "data/sdm_model_fulldt.RData")
 
 calculate_SDM_area <- function(data, threshold = 0.5) {
   unprojected_obj <- rasterFromXYZ(data)
@@ -343,655 +331,601 @@ calculate_SDM_area <- function(data, threshold = 0.5) {
 }
 
 # estimating niche distribution based on SDM
-area_model_fulldt <- sdm_model_fulldt %>% select(-data) %>%  unnest(sdm) %>%
-  group_by(species) %>% slice(4) %>%
-  mutate(area_sdm = map(sdm, ~calculate_SDM_area(.x))) %>% select(-sdm) %>%
-  unnest(area_sdm) %>% slice(3) %>% unnest(area_sdm)
+area_model_fulldt <- sdm_model_fulldt %>% 
+  dplyr::select(-data) %>%  
+  unnest(sdm) %>%
+  group_by(species) %>% 
+  slice(4) %>%
+  mutate(area_sdm = purrr::map(sdm, ~calculate_SDM_area(.x))) %>% 
+  dplyr::select(-sdm) %>%
+  unnest(area_sdm) %>% 
+  slice(3) %>% 
+  unnest(area_sdm)
 
+# getting the parameters from the model fit 
+param_random_forest_fulldt <- sdm_model_fulldt %>% 
+  dplyr::select(-data) %>% 
+  unnest(sdm) %>% 
+  group_by(species) %>% 
+  slice(3) %>% 
+  unnest() %>% 
+  dplyr::select(-.estimator) %>% 
+  tidyr::spread(., '.metric', '.estimate')
 
-## Getting the parameters from the model fit ##
-param_random_forest_fulldt <- sdm_model_fulldt %>% select(-data) %>%  unnest(sdm) %>%
-  group_by(species) %>% slice(3) %>% unnest() %>%
-  select(-.estimator) %>%  tidyr::spread(., '.metric', '.estimate')
+# plotting to check sdm
 
-## Converting SpatialPointsDataFrame of the SDM output into a raster (for plotting) ##
-raster_obj <- sdm_model_fulldt %>% select(-data) %>% unnest(sdm) %>% 
-  group_by(species) %>% slice(4) %>% ungroup() %>% mutate(raster_obj = map(sdm, ~raster_obj(.x))) %>% 
-  select(-sdm)
+gbif_data_clean2_sf <- sf::st_as_sf(gbif_data_clean2,
+                                    coords = c("longitude", "latitude"),
+                                    crs = "+proj=longlat +datum=WGS84")
 
-
-#There were issues with some computations   A: x1
-#There were issues with some computations   A: x6
-#There were issues with some computations   A: x1
-#There were issues with some computations   A: x1
-#There were issues with some computations   A: x3
-
-calculate_SDM_area <- function(data, threshold = 0.5){
-  unprojected_obj <- rasterFromXYZ(data)
-  crs(unprojected_obj) <- projection(data)
-  area_proj <- raster::area(unprojected_obj)
-  avg_area_proj <- cellStats(unprojected_obj > threshold, sum) * area_proj
-  output <- list(min_value = area_proj@data@min,
-                 max_value = area_proj@data@max,
-                 average_area_km2 = mean(getValues(avg_area_proj)))
-  return(output)
+raster_obj <- function(data) {
+  raster_unnest <- rasterFromXYZ(data)
+  crs(raster_unnest) <- projection(data)
+  return(raster_unnest)
 }
 
-## Estimating niche distribution based on SDM ##
-area_model_fulldt <- sdm_model_fulldt %>% select(-data) %>%  unnest(sdm) %>%
-  group_by(species) %>% slice(4) %>%
-  mutate(area_sdm = map(sdm, ~calculate_SDM_area(.x))) %>% select(-sdm) %>%
-  unnest(area_sdm) %>% slice(3) %>% unnest(area_sdm)
+raster_obj <- sdm_model_fulldt %>% 
+  dplyr::select(-data) %>% 
+  unnest(sdm) %>% 
+  group_by(species) %>% 
+  slice(4) %>% 
+  ungroup() %>% 
+  mutate(raster_obj = purrr::map(sdm, ~raster_obj(.x))) %>% 
+  dplyr::select(-sdm)
 
-## Getting the parameters from the model fit ##
-param_random_forest_fulldt <- sdm_model_fulldt %>% select(-data) %>%  unnest(sdm) %>%
-  group_by(species) %>% slice(3) %>% unnest() %>%
-  select(-.estimator) %>%  tidyr::spread(., '.metric', '.estimate')
-
-### ~~~~~~~~ DIET BREADTH DATA ~~~~~~~~~~~ ####
-
-## Calculating percentages of each host ##
-dietbreadth_perc <- finaldt %>% dplyr::select(Study:Country, Lat:Host_genus, N_feeds) %>%
-  group_by(species = KBGenus_Sp, host_family = Family, Method) %>% summarise(feeds = sum(N_feeds, na.rm = TRUE))
-
-# making own palette
-library("RColorBrewer")
-my_cols <- c(brewer.pal(9, "Set1"), 
-             brewer.pal(12, "Paired"), 
-             brewer.pal(8, "Dark2"), 
-             brewer.pal(8, "Accent"),
-             brewer.pal(9, "Pastel1"),
-             brewer.pal(8, "Pastel2"),
-             brewer.pal(8, "Set2"),
-             brewer.pal(12, "Set3"),
-             brewer.pal(6, "RdGy"),
-             brewer.pal(9, "BrBG"))
+points_obj <- raster_obj %>%
+  mutate(points_obj = purrr::map(raster_obj, ~rasterToPoints(.x))) %>% 
+  dplyr::select(-raster_obj) %>%
+  mutate(points_obj_df = purrr::map(points_obj, ~data.frame(.x))) %>% 
+  dplyr::select(-points_obj)
 
 
-dietbreadth_perc %>% filter(!is.na(host_family)) %>%
-  ggplot(aes(x = species, y = feeds, fill = host_family)) + ylab('Proportion of diet')+
-  geom_bar(position = "fill", stat="identity") +coord_flip() + theme_bw() +
-  guides(fill=FALSE) + #facet_grid(~Method) + 
-  scale_fill_manual('Hosts', values = my_cols)# theme(axis.text.x = element_text(angle = 90)) 
+worldmap <- ne_countries(scale = "medium", type = "map_units",
+                         returnclass = "sf", continent = c("south america", 
+                                                           "north america",
+                                                           "central america"))
 
+pdf("figures/ras.pdf", width = 12, height = 6)
+for (i in 1:length(unique(gbif_data_clean2_sf$species))) {
+  spp <- unique(gbif_data_clean2_sf$species)[i]
 
+  occ <- ggplot() +
+    geom_sf(data = worldmap, color = "gray", fill = "lightgray") +
+    xlim(-180, 0) + 
+    geom_sf(data = gbif_data_clean2_sf %>% filter (species == spp)) + 
+    theme_void() +
+    labs(title = spp)
 
+  ras <- ggplot() +
+    geom_sf(data = worldmap, color = "gray", fill = "lightgray") +
+    geom_raster(data = ((points_obj %>% filter (species == spp) %>% select(points_obj_df))$points_obj_df[[1]]), 
+                aes(x = x, y = y, fill = layer)) +
+    xlim(-180, 0) + 
+    scale_fill_viridis(name = "pred_prob") + 
+    theme_void() 
 
-##~~ join area with DBR ~~~
-areaDBR_fulldt <- area_model_fulldt %>% inner_join(., dietbreadthdt_clean, by = 'species') #%>%
-#separate(., species, into = c("Genus", "sp"), sep = " ")
+  final <- wrap_plots(occ, ras)
+  print(final)
+}
+dev.off()
 
+# diet breadth data 
 
+data <- data %>%
+  filter(KBGenus_Sp %in% sdm_model_fulldt$species) %>%
+  droplevels()
 
-### ~~~~~ NICHE BREADTH ~~~~~~~~ ####
-## ~~ Predicted niche 
+dietbreadthdt <- dietbreadthdt %>%
+  filter(KBGenus_Sp %in% sdm_model_fulldt$species) %>%
+  droplevels()
+
+dietbreadthdtnoNA <- dietbreadthdtnoNA %>%
+  filter(KBGenus_Sp %in% sdm_model_fulldt$species) %>%
+  droplevels()
+
+dietbreadthdt_clean <- dietbreadthdt_clean %>%
+  filter(species %in% sdm_model_fulldt$species) %>%
+  droplevels()
+
+dietbreadthdtnoNA_clean <- dietbreadthdtnoNA_clean %>%
+  filter(species %in% sdm_model_fulldt$species) %>%
+  droplevels()
+
+# join area with DBR
+areaDBR_fulldt <- area_model_fulldt %>% inner_join(., dietbreadthdt_clean, by = 'species') 
+
+# raster with the same dimensions as above
+r <- raster(nrows = 900, ncols = 2160, ymn = -60, vals = 1:(2160*900))
+
+# annual actual evapotranspiration
+aet <- raster("data/aet2.tif") # 21600 x 43200
+aet_ras <- resample(aet, r)
+#save(aet_ras, file = "data/aet_ras_resampled.RData")
+#load(file = "data/aet_ras_resampled.RData")
+
+# annual aridity index
+ai <- raster("data/ai2.tif")
+ai_ras <- resample(ai, r)
+#save(ai_ras, file = "data/ai_ras_resampled.RData")
+#load(file = "data/ai_ras_resampled.RData")
+
+# Priestley-Taylor alpha coefficient
+alpha <- raster("data/alpha2.tif")
+alpha_ras <- resample(alpha, r)
+#save(alpha_ras, file = "data/alpha_ras_resampled.RData")
+#load(file = "data/alpha_ras_resampled.RData")
+
+# annual potential evapotranspiration
+etyr <- raster("data/etyr2.tif")
+etyr_ras <- resample(etyr, r)
+#save(etyr_ras, file = "data/etyr_ras_resampled.RData")
+#load(file = "data/etyr_ras_resampled.RData")
+
+# net primary productivity 
+npp <- raster("data/npp08.18.tif")
+npp_ras <- resample(npp, r)
+#save(npp_ras, file = "data/npp_ras_resampled.RData")
+#load(file = "data/npp_ras_resampled.RData")
+
+clim.current2 <- stack(clim.current, aet_ras, ai_ras, alpha_ras, etyr_ras,
+                       npp_ras)
+env_vals <- raster::extract(clim.current2, 1:length(r[]))  
+
+# predicted niche 
+
+# calculate both realised and predicted niche breadth 
+  # (former: spatial points, latter: SDM predictions)
+estimate_nichebreadth <- function(.x, threshold = 0.5, sp_clim = env_vals) {
+
+  if ((class(.x) == "SpatialPointsDataFrame") == TRUE) {
+
+    data <- rasterFromXYZ(.x)
+    obj_crs <- crs(data)
+
+    # setting up cells as NA below threshold
+    data[data < threshold] <- NA
+  
+  } else if((class(.x) == "SpatialPoints") == TRUE) {
+  
+    data <- .x
+  
+  } else {
+    warning("Input needs to be either a SpatialPoints or SpatialPointsDataFrame")
+  }
+
+  # extracting climate data
+  r <- raster(ncols = 2160, nrows = 900, ymn = -60, vals = rep(1, 2160*900))
+
+  raster_i <- resample(data, r)
+
+  rastercells <- which(getValues(raster_i) > 0)
+  
+  values_env <- sp_clim[rastercells, ]
+  values_env <- as.data.frame(values_env)
+
+  env_avg <- numeric()
+  for (i in 1:ncol(values_env)) {
+
+    if (nrow(values_env) == 1) {
+      ifelse(is.na(values_env[i]),
+             env_avg[i] <- NA,
+             env_avg[i] <- values_env[i])
+    } else {
+      ifelse(all(is.na(values_env[, i])),
+             env_avg[i] <- NA,
+             env_avg[i] <- mean(values_env[, i], na.rm = TRUE))
+    }
+
+  }
+  names(env_avg) <- colnames(values_env)
+
+  temp_niche_breadth <- max(values_env$bio5, na.rm = T) - 
+    min(values_env$bio6, na.rm = T)
+  names(temp_niche_breadth) <- "temp_niche_breadth"
+  prec_niche_breadth <- max(values_env$bio16, na.rm = T) - 
+    min(values_env$bio17, na.rm = T)
+  names(prec_niche_breadth) <- "prec_niche_breadth"
+
+  return(c(env_avg, temp_niche_breadth, prec_niche_breadth))
+}
+
 predicted_nichebreadth_fulldt <- sdm_model_fulldt %>% 
   dplyr::select(-data) %>%  
   unnest(sdm) %>%
   group_by(species) %>% 
   slice(4) %>% 
-  mutate(pred_nichebreadth = map(sdm, ~estimate_nichebreadth(.x))) %>%
-  dplyr::select(-sdm) %>% unnest(pred_nichebreadth)
+  mutate(pred_nichebreadth = purrr::map(sdm, ~estimate_nichebreadth(.x))) %>%
+  dplyr::select(-sdm) %>%
+  unnest_wider(pred_nichebreadth)
 
-
-### ~~~>> putting all info into one dataset <<<~~~~ ####
+# putting all info into one dataset
 area_niche_DBR_fulldt <- areaDBR_fulldt %>% 
   inner_join(., predicted_nichebreadth_fulldt, by = "species")
 
+write.csv(area_niche_DBR_fulldt, "data/final_data_25oct23.csv", row.names = F)
 
+# laoding again in a different format
+area_niche_DBR_fulldt <- read.csv("data/final_data_25oct23.csv")
 
+# loading phylogenies (MCC and 1000 random trees from posterior distribution)
+tree <- read.nexus("data/tr_cal_f.tre")
+trees <- read.nexus("data/1k_random_tria.trees")
 
+# eliminate the samples not in the phylogeny and vice-versa
+area_niche_DBR_fulldt$species <- 
+  stri_replace_all_fixed(area_niche_DBR_fulldt$species, " ", "_")
 
+area_niche_DBR_fulldt_clean <- area_niche_DBR_fulldt[area_niche_DBR_fulldt$species %in% tree$tip.label, ]
 
+tree <- drop.tip(tree, setdiff(tree$tip.label, area_niche_DBR_fulldt_clean$species))
+trees.pruned <- list()
+for (i in 1:1000) {
+  trees.pruned[[i]] <- drop.tip(trees[[i]], setdiff(trees[[i]]$tip.label,
+                                                    area_niche_DBR_fulldt_clean$species))
+}
 
+# calculating percentages of each host
+dietbreadth_perc <- data %>% 
+  filter(KBGenus_Sp %in% stri_replace_all_fixed(area_niche_DBR_fulldt_clean$species, "_", " ")) %>%
+  dplyr::select(KBTribe:Country, Lat:Host_genus, N_feeds) %>%
+  group_by(species = KBGenus_Sp, host_family = Family) %>% 
+  summarise(feeds = sum(N_feeds, na.rm = TRUE)) %>%
+  filter(species %in% area_model_fulldt$species) %>% 
+  droplevels()
 
+pdf("figures/new/Fig1.pdf", height = 10)
+dietbreadth_perc %>% 
+  filter(!is.na(host_family)) %>%
+  ggplot(aes(x = species, y = feeds, fill = host_family)) + ylab("Proportion of diet") +
+  geom_bar(position = "fill", stat = "identity") + 
+  coord_flip() + 
+  theme_bw(base_line_size = 0, base_rect_size = 0) +
+  guides(fill = FALSE) + 
+  scale_fill_viridis(discrete = TRUE) +
+  theme(legend.position = "none") + 
+  #theme(legend.position = "right", legend.direction = "vertical")
+  geom_text(aes(y = feeds, label = toupper(as.character(host_family))), size = 2, position = position_fill(vjust = 0.5), color = "white")
+dev.off()
 
+######################## FIGURE PHYLOGENY
 
+pdf("figures/Fig1_scale.pdf")
+revts(ggtree(tree, layout = "fan", open.angle = 180, ladderize = F) + geom_tiplab(size = 1.6)) +
+  coord_geo_polar(dat = "epochs", lwd = NULL) +
+  scale_x_continuous(breaks = seq(-60, 0, 10), labels = abs(seq(-60, 0, 10)))
+dev.off()
 
+DBR_area <- dat[, c("speciesDBR", "area")]
+DBR_area <- DBR_area[tree$tip.label, ]
+DBR_area_norm <- DBR_area
+DBR_area_norm$speciesDBR <- DBR_area_norm$speciesDBR/max(DBR_area_norm$speciesDBR)
+DBR_area_norm$area <- DBR_area_norm$area/max(DBR_area_norm$area)
 
-### ~~~~~~~~~ CALCULATING HYPERVOLUMES ~~~~~~~~~~ ####
-# Estimating hypervolumes 
-sdm_hypervol_estimates_fulldt <- sdm_model_fulldt %>% 
-  dplyr::select(-data) %>%  
-  unnest(sdm) %>%
-  group_by(species) %>% 
-  slice(4) %>%
-  mutate(hypervol_calculation = map2(sdm, species, ~hypervolumefromSpatialPoints(.x, .y))) 
+h <- max(nodeHeights(tree))
+m <- ncol(DBR_area)
+cols <- wes_palette("FantasticFox1")[c(2, 4)]
+xlim <- ylim <- 1.4 * c(-h, h) + c(-1, 1) * 0.1 * m * h + 0.02 * c(-h, h)
+ylim <- c(0, ylim[2])
 
-#Extracting information 
-extrated_hyper_nested_fulldt <- sdm_hypervol_estimates_fulldt %>% 
-  group_by(species) %>%
-  mutate(hyper_var_imp = map(hypervol_calculation, 'Hypervolume_var_imp'),
-         hyper_trimmed = map(hypervol_calculation, 'Hypervolume_trimmed')) %>%
-  select(-hypervol_calculation) #%>% mutate(species1 = species) %>%
-# separate(., species, into = c("Genus", "sp"), sep = " ")
-
-## ~~~~~ Hypervolume volume ~~~~~~
-extracted_hyper_volume <- extrated_hyper_nested_fulldt %>% 
-  select(species, hyper_trimmed) %>%
-  mutate(hyper_volume = map(hyper_trimmed, function(.x) {.x@Volume})) %>% 
-  select(-hyper_trimmed) %>%
-  unnest()
-
-
-
-### ~~~~~>>>> All data combined <<<<<~~~~~~####
-complete_DBRareanichehyper_dt <- inner_join(extracted_hyper_volume, area_niche_DBR_fulldt)
-###~~~~~~~~ Writing up the info as new dataframes ~~~~~~~######
-write.csv(complete_DBRareanichehyper_dt, "Full_Final_modelled_triatomidae_data_April2021.csv")
-## ---------------- <<<>>>> --------------
-
-## Getting the taxon Key ###
-gbif_data_key <- data.frame()
-for(i in 1:length(gbif_data)){
-  if(i < 2){
-    gbif_data_key <- data.frame(taxonKey = gbif_data[[i]]$taxonKey,
-                                gbifID = gbif_data[[i]]$gbifID)
-  } else {
-    inter_key<- data.frame(taxonKey = gbif_data[[i]]$taxonKey,
-                           gbifID = gbif_data[[i]]$gbifID)
+pdf("figures/Fig1_tree.pdf", width = 10)
+plotTree(tree, type = "fan", lwd = 1, xlim = xlim, ylim = ylim, ftype = "i",
+         fsize = 0.5, part = 0.5)
+for (i in 1:ncol(DBR_area_norm)) {
+    tt <- tree
+    tt$edge.length[which(tt$edge[, 2] <= Ntip(tt))] <-
+      tt$edge.length[which(tt$edge[, 2] <= Ntip(tt))] +
+        0.47 * h + (i - 1) * 0.1 * h
+    plotTree(tt, color = "transparent", type = "fan", xlim = xlim, ylim = ylim,
+             lwd = 1, ftype = "off", add = TRUE, part = 0.5)
     
-    gbifdf <-bind_rows(gbif_data_key, inter_key)
-  }
-}
+    pp1 <- get("last_plot.phylo", envir = .PlotPhyloEnv)
+    tt$edge.length[which(tt$edge[, 2] <= Ntip(tt))] <-
+      tt$edge.length[which(tt$edge[, 2] <= Ntip(tt))] + 0.09 * h
 
-write.csv(gbif_data_key, "gbifKey_Triatomidae_data_April2021.csv")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#########################################################################
-######                                                              #####
-###### ~~~~~~~~~~~~~~~~~~~ REGRESSION MODELS ~~~~~~~~~~~~~~~~~~~~~~ #####
-######                                                              #####
-#########################################################################
-library(ape)
-library(adephylo)
-library(phylosignal)
-library(ggrepel)
-library(stringr)
-library(nlme)
-
-## Loading diet data (with NAs)
-complete_DBRareanichehyper_dt <- read.csv("/Users/s23jm9/Dropbox/University of Aberdeen/Research-Projects/1.Research Projects/Triatomidae-project/Full_Final_modelled_triatomidae_data_April2021.csv",
-                                          header = TRUE)
-# Removing the duplicated Rhodinius ecuadoriensis
-complete_DBRareanichehyper_dt <- complete_DBRareanichehyper_dt[-18,]
-## Counting missing values
-nacount <- finaldt %>% 
-  dplyr::select(KBGenus_Sp, Class:Host_genus) 
-nacount_table <- data.frame(sum_NAs = apply(nacount, 2, function(x) sum(is.na(x))),
-                            obs = nrow(finaldt))
-nacount_table$prop_missing <- with(nacount_table, sum_NAs/obs * 100)
-nacount_table
-
-
-
-
-
-
-
-## Just assigning the previous full dataset to a new object for the sake of the script 
-complete_DBRareanichehyper_dt_FULL <- complete_DBRareanichehyper_dt
-
-### ~~~~~ Loading metadata with species name
-metadata_tree <- read.csv("/Users/s23jm9/Dropbox/University of Aberdeen/Research-Projects/1.Research Projects/Triatomidae-project/Completed_data/Meta_data_tree.csv",
-                          strip.white = TRUE,
-                          stringsAsFactors = FALSE)
-## ~~~  Loading tree
-tree <- ape::read.tree("/Users/s23jm9/Dropbox/University of Aberdeen/Research-Projects/1.Research Projects/Triatomidae-project/arbol_check.nex")
-
-## Function to change labels based on metadata ###
-change_tree_labels <- function(tree, metadata){
-  new_tree <- c()
-  tree_test <- tree
-  metadata_tree <- metadata
-  for(i in 1:length(tree_test$tip.label)){
-    for(j in 1:nrow(metadata_tree)){
-      tree_test$tip.label[i] <- ifelse(stringi::stri_compare(tree_test$tip.label[i], 
-                                                             metadata_tree$Tip_label[j]) == 0,
-                                       metadata_tree$names_full[j],
-                                       next)
+    #plotrix::draw.circle(0, 0, radius = h + 0.25 * h + (i - 1) * 0.1 * h,
+                         #border="#505050")
+    plotTree(tt, color = "transparent", type = "fan", xlim = xlim, ylim = ylim,
+             lwd = 1, ftype = "off", add = TRUE, part = 0.5)
+    
+    pp2 <-get("last_plot.phylo", envir = .PlotPhyloEnv)
+    par(lend = 1)
+    for(j in 1:Ntip(tree)){
+        ii <- which(rownames(DBR_area_norm) == tree$tip.label[j])
+        dx <- (pp2$xx[j] - pp1$xx[j]) * DBR_area_norm[ii, i]
+        dy <- (pp2$yy[j] - pp1$yy[j]) * DBR_area_norm[ii, i]
+        #lines(pp1$xx[j]+c(0,1.05*dx),pp1$yy[j]+c(0,1.05*dy),lwd=10,
+        #   col=par()$fg)
+        lines(pp1$xx[j] + c(0, dx), pp1$yy[j] + c(0, dy), lwd = 10, 
+              col = cols[i])
     }
-  }
-  new_tree <- tree_test
-  return(new_tree)
 }
 
-## ~~~ Tree which is relabelled 
-tree2 <- change_tree_labels(tree, metadata_tree)
-
-## ~~~ Prunning phylo tree
-labelstipstree <- data.frame(labels = tree2$tip.label)
-labelstipsdf <- data.frame(labels = complete_DBRareanichehyper_dt_FULL$species)
-
-testdata_tree <- inner_join(labelstipstree, labelstipsdf) %>% mutate(tip.label = labels) %>% filter(tip.label != "Trub") %>%
-  #select(-labels) %>% 
-  tibble::column_to_rownames(., var = "tip.label") 
-
-
-nottree <- geiger::name.check(tree2, testdata_tree)$tree_not_data
-
-### ~~~ >><<< Tree which is cleaned and relabelled ~~~ <<<>>> ###
-tree_clean <-ape::drop.tip(tree2, nottree)
-# ~~~~~~~~~<<<<<>>>>> ~~~~~~~~~ <<<>>>>> ~~~~~~~~~~~~ #
-
-# Prunning the data to include only taxa in the tree
-complete_DBRareanichehyper_dt_FULL_prunned <- complete_DBRareanichehyper_dt_FULL[complete_DBRareanichehyper_dt_FULL$species %in% tree_clean$tip.label,] %>%
-  dplyr::mutate(species1 = species) %>%
-  column_to_rownames("species1")
-## ~~~~~~~~~~~~~~~~~~
-
-
-
-## Correlation plot DBR metrics ###
-corrplot::corrplot(as.matrix(cor(complete_DBRareanichehyper_dt_FULL[6:9])), 
-                   method= c("number"),
-                   type = "lower",
-                   tl.col="black",
-                   tl.srt=60)
-
-### Correlation plot clim vars ###
-corrplot::corrplot(as.matrix(cor(na.omit(LatAm_clim_df[,c("bio1", "bio4", "bio7", "bio12", "bio15")]))), 
-                   method= c("number"),
-                   type = "lower",
-                   tl.col="black",
-                   tl.srt=60)
-
-
-
-
-##### ~~~ Regression Models ~~~ #####
-### ~~~~~~~~~ Full Model  ~~~~~~~~~~~ ######
-## Correlations
-with(complete_DBRareanichehyper_dt_FULL_prunned,
-     cor.test(hyper_volume, pred_nichebreadth))
-with(complete_DBRareanichehyper_dt_FULL_prunned,
-     cor.test(area_sdm, pred_nichebreadth))
-with(complete_DBRareanichehyper_dt_FULL_prunned,
-     cor.test(area_sdm, hyper_volume))
-
-with(complete_DBRareanichehyper_dt_FULL,
-     cor.test(hyper_volume, pred_nichebreadth))
-# ~~ accounting for collinearity between pred_niche and hypervol
-complete_DBRareanichehyper_dt_FULL_prunned$res_hyper <- residuals(lm(complete_DBRareanichehyper_dt_FULL_prunned$hyper_volume ~ complete_DBRareanichehyper_dt_FULL_prunned$pred_nichebreadth))
-complete_DBRareanichehyper_dt_FULL$res_hyper <- residuals(lm(complete_DBRareanichehyper_dt_FULL$hyper_volume ~ complete_DBRareanichehyper_dt_FULL$pred_nichebreadth))
-
-
-#~ Phylogenetically controlled
-fullmodel_area0 <-nlme::gls(log(familyDBR) ~ log(area_sdm) +
-                              pred_nichebreadth + res_hyper, 
-                             data=complete_DBRareanichehyper_dt_FULL_prunned, 
-                             correlation = ape::corPagel(1, tree_clean))
-
-summary(fullmodel_area0)
-anova(fullmodel_area0)
-
-
-
-#~ LM
-fullmodel_LM <- lm(log(familyDBR) ~ log(area_sdm) +
-                              pred_nichebreadth + res_hyper, 
-                            data=complete_DBRareanichehyper_dt_FULL)
-summary(fullmodel_LM)
-anova(fullmodel_LM)
-
-
-
-
-
-
-
-#### ~~~~~ PLOTTING  ~~~~~~ ###########
-## ~~ (Phylogenetically controlled) ~~~~
-pred_fullmodel <- data.frame(complete_DBRareanichehyper_dt_FULL_prunned, 
-                        phylo_cont = exp(predict(fullmodel_area0, complete_DBRareanichehyper_dt_FULL_prunned)))
-predframe_fullmodel  <- with(complete_DBRareanichehyper_dt_FULL_prunned,data.frame(familyDBR,
-                                                                              wow=pred_fullmodel$phylo_cont,
-                                                                              lwr=exp(log(pred_fullmodel$phylo_cont)-1.96*0.08),
-                                                                              upr=exp(log(pred_fullmodel$phylo_cont)+1.96*0.08)))
-
-
-fullplotdt_fullmodel<- data.frame(area_sdm = complete_DBRareanichehyper_dt_FULL_prunned$area_sdm,
-                                  niche_fam = complete_DBRareanichehyper_dt_FULL_prunned$pred_nichebreadth,
-                                  res_hyper_fam = complete_DBRareanichehyper_dt_FULL_prunned$res_hyper,
-                              DBR_fam = complete_DBRareanichehyper_dt_FULL_prunned$familyDBR,
-                              fitline = predframe_fullmodel$wow,
-                              lwr = predframe_fullmodel$lwr,
-                              upr = predframe_fullmodel$upr,
-                              species = complete_DBRareanichehyper_dt_FULL_prunned$species) %>% 
-  mutate(species1 = species) %>%
-  separate(., species1, into = c("Genus", "sp"), sep = " ")
-
-
-# plot 
-phylotree_plot_DBR_geo0 <- ggplot(fullplotdt_fullmodel) + 
-  geom_point(aes(x = log(area_sdm), 
-                 y =  log(DBR_fam),
-                 fill = Genus),
-             pch = 21,
-             size = 3, alpha = 0.5) +
-  geom_smooth(aes(y = log(fitline), x = log(area_sdm)), size = 1, method = "lm", se = FALSE, col = "black") +
-  theme_bw() + ggtitle('Phylogenetically controlled') +
-  theme(plot.title = element_text(face = "bold.italic", size = 9),
-        panel.grid = element_blank(),
-        legend.position = "none") +
-  xlab(expression('log(Predicted area) in '~km^2)) +
-  ylab('log(Family-level DBR)') +
-  scale_fill_manual(breaks = c("Mepraia", "Panstrongylus", "Rhodnius", "Triatoma", "Paratriatoma"),
-                    values = c("orangered3", "royalblue4", "green3", "steelblue2", "brown2"))
-
-phylotree_plot_DBR_geo0
-
-
-
-
-
-
-phylotree_plot_DBR_niche <- ggplot(fullplotdt_fullmodel ) + 
-  geom_point(aes(x = niche_fam, 
-                 y =  log(DBR_fam),
-                 fill = Genus),
-             pch = 21,
-             size = 3, alpha = 0.5) +
-  geom_smooth(aes(y = log(fitline), x = niche_fam), size = 1, method = "lm", se = FALSE, col = "black") +
-  theme_bw() + ggtitle('Phylogenetically controlled') +
-  theme(plot.title = element_text(face = "bold.italic", size = 9),
-        panel.grid = element_blank(),
-        legend.position = "none") +
-  ylab(expression('log(Family-level DBR')) +
-  xlab('Niche breadth') +
-  scale_fill_manual(breaks = c("Mepraia", "Panstrongylus", "Rhodnius", "Triatoma", "Paratriatoma"),
-                    values = c("orangered3", "royalblue4", "green3", "steelblue2", "brown2"))
-
-phylotree_plot_DBR_niche
-
-
-
-
-
-## ~~ LM
-## ~~ Plotting (LM) ~~~~
-pred_fullmodelLM <- data.frame(complete_DBRareanichehyper_dt_FULL, 
-                             LM_cont = exp(predict(fullmodel_LM, complete_DBRareanichehyper_dt_FULL)))
-predframe_fullmodel_LM  <- with(complete_DBRareanichehyper_dt_FULL,data.frame(familyDBR,
-                                                                                   wow=pred_fullmodelLM$LM_cont))
-
-
-fullplotdt_fullmodel_LM <- data.frame(area_sdm = complete_DBRareanichehyper_dt_FULL$area_sdm,
-                                  niche_fam = complete_DBRareanichehyper_dt_FULL$pred_nichebreadth,
-                                  res_hyper_fam = complete_DBRareanichehyper_dt_FULL$res_hyper,
-                                  DBR_fam = complete_DBRareanichehyper_dt_FULL$familyDBR,
-                                  fitline = predframe_fullmodel_LM$wow,
-                                  species = complete_DBRareanichehyper_dt_FULL$species) %>% 
-  mutate(species1 = species) %>%
-  separate(., species1, into = c("Genus", "sp"), sep = " ")
-
-
-
-# plot
-notree_plot_DBR_geo2 <- ggplot(fullplotdt_fullmodel_LM ) + 
-  geom_jitter(aes(x = log(DBR_fam), 
-                  y = log(area_sdm),
-                  fill = Genus), width = 0.2,
-              pch = 21,
-              size = 3, alpha = 0.5) +
-  geom_smooth(aes(x = log(DBR_fam), 
-                  y = log(area_sdm)), 
-              method = "lm", se = FALSE, col = "black") +
-  theme_bw() + ggtitle('Linear regression') +
-  theme(legend.position = "right",
-        plot.title = element_text(face = "bold.italic", size = 9),
-        panel.grid = element_blank()) +
-  xlab(expression('log(Predicted area) in '~km^2)) +
-  ylab('log(Family-level DBR)') + 
-  scale_fill_manual(breaks = c("Mepraia", "Panstrongylus", "Rhodnius", "Triatoma",
-                               "Belminus", "Cavernicola", "Meccus", "Paratriatoma",
-                               "Psammolestes", "Eratyrus"),
-                    values = c("orangered3", "royalblue4", "green3", "steelblue2",
-                               "darkorange2", "mediumorchid2", "goldenrod1", "brown2", 
-                               "darkgreen", "red2"))
-notree_plot_DBR_geo2
-
-
-
-
-
-
-notree_plot_DBR_niche <- ggplot(fullplotdt_fullmodel_LM ) + 
-  geom_jitter(aes(y = log(DBR_fam), 
-                  x = niche_fam,
-                  fill = Genus), width = 0.2,
-              pch = 21,
-              size = 3, alpha = 0.5) +
-  geom_smooth(aes(y = log(DBR_fam), 
-                  x = niche_fam), 
-              method = "lm", se = FALSE, col = "black") +
-  theme_bw() + ggtitle('Linear regression') +
-  theme(legend.position = "right",
-        plot.title = element_text(face = "bold.italic", size = 9),
-        panel.grid = element_blank()) +
-  xlab(expression('Niche breadth')) +
-  ylab('log(Family-level DBR)') + 
-  scale_fill_manual(breaks = c("Mepraia", "Panstrongylus", "Rhodnius", "Triatoma",
-                               "Belminus", "Cavernicola", "Meccus", "Paratriatoma",
-                               "Psammolestes", "Eratyrus"),
-                    values = c("orangered3", "royalblue4", "green3", "steelblue2",
-                               "darkorange2", "mediumorchid2", "goldenrod1", "brown2", 
-                               "darkgreen", "red2"))
-notree_plot_DBR_niche
-
-
-## Multipanel
-library(patchwork)
-
-DBRplot <- (phylotree_plot_DBR_geo0 | notree_plot_DBR_geo2) / (phylotree_plot_DBR_niche | notree_plot_DBR_niche )
-DBRplot <- DBRplot + plot_annotation(tag_levels = 'a', tag_suffix = ".") & 
-  theme(plot.tag = element_text(size = 14))
-
-DBRplot # Saved as APRIL2021_FINAL_AreavsDBR.pdf
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-##### ~~~ Feeding trajectories  ~~~~~~~
-# data frame
-Diet_trajectoriesdt <- complete_DBRareanichehyper_dt_FULL %>%
-  dplyr::select(species, speciesDBR:classDBR) %>%
-  pivot_longer(cols = speciesDBR:classDBR,
-               names_to = "Level",
-               values_to = "DBR") %>%
-  arrange(desc(Level, DBR)) %>%
-  tidyr::separate(col = "species", into = c("Genus", "Sp"), sep = " ", remove = FALSE)
-
-
-# Converting first letter to capital and removing the DBR suffix
-Diet_trajectoriesdt$Level <- as.factor(stringr::str_to_title(stringr::str_replace_all(Diet_trajectoriesdt$Level,
-                                                                                      "DBR", "")))
-
-## Reordering for plotting 
-Diet_trajectoriesdt$Level <- relevel(Diet_trajectoriesdt$Level, ref = "Class")
-Diet_trajectoriesdt$Level <- relevel(Diet_trajectoriesdt$Level, ref = "Order")
-Diet_trajectoriesdt$Level <- relevel(Diet_trajectoriesdt$Level, ref = "Family")
-Diet_trajectoriesdt$Level <- relevel(Diet_trajectoriesdt$Level, ref = "Genus")
-Diet_trajectoriesdt$Level <- relevel(Diet_trajectoriesdt$Level, ref = "Species")
+xx <- rep(0.65 * par()$usr[4], m)
+yy <- 0.95 * par()$usr[4] - 1.5 * 0:(m-1) * strheight("W")
+text(xx, yy, c("DBR", "Range area"), pos = 4, cex = 0.8)
+scale.bar <- apply(DBR_area_norm, 2, max, na.rm = TRUE) * 0.09 * h
+xx2 <- xx - scale.bar
+segments(x0 = xx, y0 = yy, x1 = xx2, y1 = yy, lwd = 10, col = cols)
+text(rep(min(xx2), m), yy, paste(formatC(apply(DBR_area, 2 , max, na.rm = T),
+                                         digits = 1, format = "f"), 
+                 c("species", expression(km^2)), sep = " "), 
+                 cex = 0.8, pos = 2)
+dev.off()
+
+########################
+
+# analyses
+
+pca <- prcomp(area_niche_DBR_fulldt_clean[, c("bio1", "bio2",
+                                              "bio3", "bio4",
+                                              "bio5", "bio6",
+                                              "bio7", "bio8",
+                                              "bio9", "bio10",
+                                              "bio11", "bio12",
+                                              "bio13", "bio14",
+                                              "bio15", "bio16",
+                                              "bio17", "bio18",
+                                              "bio19", "aet2",
+                                              "ai2", "alpha2",
+                                              "etyr2", "npp08.18")], 
+              center = TRUE, scale. = TRUE)
+
+summary(pca, cutoff = 0.001, loadings = TRUE)
+
+pcfactorloadings <- pca$rotation[, 1:3]
+
+fulldt_analyses <- cbind(area_niche_DBR_fulldt_clean[, c("species", "area_sdm",
+                                                         "speciesDBR", 
+                                                         "genusDBR",
+                                                         "familyDBR",
+                                                         "orderDBR",
+                                                         "classDBR",
+                                                         "temp_niche_breadth",
+                                                         "prec_niche_breadth")],
+                        pca$x[, 1:3])
+
+# verify if there is collinearity amog variables (OK)
+result <- correlation(fulldt_analyses)
+s <- summary(result)
+
+pdf("figures/new/FigS1.pdf", width = 10)
+plot(s)
+dev.off()
+
+# phylogenetic signal
+
+fulldt_analyses2 <- fulldt_analyses %>% 
+  dplyr::select(species, area_sdm, temp_niche_breadth, prec_niche_breadth,
+                PC1, PC2, PC3) %>%
+  remove_rownames() %>%
+  column_to_rownames(var = "species")
+
+p4d_tr <- phylo4d(tree, fulldt_analyses2)
+phylosig_tr <- phyloSignal(p4d = p4d_tr, method = c("Lambda", "K"), 
+                           reps = 1000)
+
+
+# 1000 replicates
+K <- K_p <- L <- L_p <- matrix(nrow = 6, ncol = 1000)
+rownames(K) <- rownames(K_p) <- rownames(L) <- rownames(L_p) <- 
+  colnames(fulldt_analyses2)
+for (i in 1:1000) {
+  p4d <- phylo4d(trees.pruned[[i]], fulldt_analyses2)
+  phylosig <- phyloSignal(p4d = p4d, method = c("Lambda", "K"), reps = 1000)
+  K[, i] <- phylosig$stat$K
+  K_p[, i] <- phylosig$pvalue$K
+  L[, i] <- phylosig$stat$Lambda
+  L_p[, i] <- phylosig$pvalue$Lambda
+}
+
+res_phylosig <- data.frame(
+    median_K = rowMeans(K),
+
+    min_K = apply(K, 1, min),
+
+    max_K = apply(K, 1, max),
  
+    median_K_p = rowMeans(K_p),
 
-# Calculating mean trajectories per Genus
-Mean_diettrajectory_genus <- Diet_trajectoriesdt %>%
-  group_by(Genus, Level) %>% 
-  summarise(DBR_genus = mean(DBR))
+    min_K_p = apply(K_p, 1, min),
 
-# Calculating overall mean trajectory
-Mean_diettrajectory_all <- Diet_trajectoriesdt %>%
-  group_by(Level) %>% 
-  summarise(DBR_all = mean(DBR))
+    max_K_p = apply(K_p, 1, max),
 
-ggplot(Diet_trajectoriesdt) + 
-  geom_line(aes(x = Level, y = DBR, group = species, colour = Genus), alpha = 0.3, size = 0.4, col = "grey60") +
-  geom_line(data = Mean_diettrajectory_genus, aes(x = Level, y = DBR_genus, group = Genus, col= Genus), size = 0.8, alpha = 0.6) +
-  #geom_line(data = Mean_diettrajectory_all, aes(x = Level, y = DBR_all, group = 1), size = 1.2, col = "black", alpha = 0.6, lty = "dashed") +
-  scale_x_discrete(expand = c(0.01,0.03)) +
-  theme_linedraw() + 
-  theme(legend.position = "right",
-        panel.grid = element_blank(),
-        axis.title.x = element_text(family = "Arial", size = 14),
-        axis.title.y = element_text(size = 14),
-        axis.text = element_text(size = 11),
-        legend.justification = "left",
-        legend.title = element_text(family = "Arial", size = 12, face = "bold")) +
-  xlab(expression('Host taxonomic level')) +
-  ylab('Number of hosts') + 
-  scale_colour_manual(breaks = c("Mepraia", "Panstrongylus", "Rhodnius", "Triatoma",
-                               "Belminus", "Cavernicola", "Meccus", "Paratriatoma",
-                               "Psammolestes", "Eratyrus"),
-                    values = c("orangered3", "royalblue4", "green3", "steelblue2",
-                               "darkorange2", "mediumorchid2", "goldenrod1", "brown2", 
-                               "darkgreen", "red2"))
-  
+    median_L = rowMeans(L),
 
+    min_L = apply(L, 1, min),
 
+    max_L = apply(L, 1, max),
 
+    median_L_p = rowMeans(L_p),
 
+    min_L_p = apply(L_p, 1, min),
 
+    max_L_p = apply(L_p, 1, max)
+)
 
+res_phylosig2 <- res_phylosig %>%
+  mutate(across(where(is.numeric), round, 3)) %>%
+  unite(K, c(min_K, max_K), sep = "-") %>%
+  mutate(K = purrr::map(K, ~paste0("(", .x, ")"))) %>%
+  unite(K_p, c(min_K_p, max_K_p), sep = "-") %>%
+  mutate(K_p = purrr::map(K_p, ~paste0("(", .x, ")"))) %>%
+  unite(L, c(min_L, max_L), sep = "-") %>%
+  mutate(L = purrr::map(L, ~paste0("(", .x, ")"))) %>%
+  unite(L_p, c(min_L_p, max_L_p), sep = "-") %>%
+  mutate(L_p = purrr::map(L_p, ~paste0("(", .x, ")"))) %>%
+  dplyr::select(K, K_p, L, L_p)
 
-
-
-
-
-
-
-
-### ~~~~ Diet analyses ~~~~~~ ######
-library("RColorBrewer")
-my_cols <- c(brewer.pal(8, "Set1"), brewer.pal(12, "Paired"), brewer.pal(8, "Dark2"), brewer.pal(3, "Accent"))
-
-DBR_full <-  finaldt %>% 
-  dplyr::select(Study:Country, Lat:Host_genus, N_feeds) %>%
-  dplyr::filter(N_feeds > 0) %>%
-  dplyr::arrange(desc(N_feeds)) 
-
-DBR_full$Class <- as.factor(DBR_full$Class)
-DBR_full$Class <- ifelse(DBR_full$Class == "Sauropsida (Reptilia)", "Reptilia",  as.character(DBR_full$Class))
-table(DBR_full$Class)
-
-
-
-
-### Pareto function
-pareto.MLE <- function(data, i) { 
-  require(dplyr)
-  X <- data[i]
-  n <- length(X)
-  m <- min(X)
-  a <- n/sum(log(X)-log(m))
-  return( c(m,a) ) 
+for (i in 1:nrow(res_phylosig2)) {
+  res_phylosig2$K[i] <- paste0(round(phylosig_tr$stat$K[i], 3), 
+                               " ", res_phylosig2$K[i])
+  res_phylosig2$K_p[i] <- paste0(round(phylosig_tr$pvalue$K[i], 3), 
+                               " ", res_phylosig2$K_p[i])
+  res_phylosig2$L[i] <- paste0(round(phylosig_tr$stat$L[i], 3), 
+                               " ", res_phylosig2$L[i])
+  res_phylosig2$L_p[i] <- paste0(round(phylosig_tr$pvalue$L[i], 3), 
+                               " ", res_phylosig2$L_p[i])
 }
 
-library(boot)
-pareto.MLE(complete_DBRareanichehyper_dt_FULL$familyDBR)
-pareto_boot_sp <- boot(complete_DBRareanichehyper_dt_FULL$familyDBR, pareto.MLE, R = 1000)
-boot.ci(pareto_boot_sp, index = 2)
+res_phylosig_final <- do.call(cbind, res_phylosig2)
+rownames(res_phylosig_final) <- rownames(res_phylosig2)
+
+write.csv(res_phylosig_final, "tables/new/Table1_unformatted.csv")
+
+# pgls
+
+layout(matrix(1:6, ncol = 3))
+hist(fulldt_analyses$temp_niche_breadth)
+hist(fulldt_analyses$prec_niche_breadth)
+hist(fulldt_analyses$area)
+hist(fulldt_analyses$PC1)
+hist(fulldt_analyses$PC2)
+hist(fulldt_analyses$PC3)
+
+# scaled the predictors
+fulldt_analyses$scale_nbtemp <- scale(fulldt_analyses$temp_niche_breadth, 
+                                      center = TRUE)
+fulldt_analyses$scale_nbprec <- scale(fulldt_analyses$prec_niche_breadth, 
+                                      center = TRUE)
+fulldt_analyses$scale_area <- scale(fulldt_analyses$area, center = TRUE)
+fulldt_analyses$scale_pc1 <- scale(fulldt_analyses$PC1, center = TRUE)
+fulldt_analyses$scale_pc2 <- scale(fulldt_analyses$PC2, center = TRUE)
+fulldt_analyses$scale_pc3 <- scale(fulldt_analyses$PC3, center = TRUE)
+
+layout(matrix(1:6, ncol = 3))
+hist(fulldt_analyses$scale_nbtemp)
+hist(fulldt_analyses$scale_nbprec)
+hist(fulldt_analyses$scale_area)
+hist(fulldt_analyses$scale_pc1)
+hist(fulldt_analyses$scale_pc2)
+hist(fulldt_analyses$scale_pc3)
+
+comp_dat <- comparative.data(data = fulldt_analyses, phy = tree, 
+                             names.col = "species", vcv.dim = 2, 
+                             warn.dropped = TRUE)
+
+comp_dat_trees <- list()
+for (i in 1:length(trees)) {
+  comp_dat_trees[[i]] <- comparative.data(data = fulldt_analyses, 
+                                          phy = trees.pruned[[i]],
+                                          names.col = "species", 
+                                          vcv.dim = 2, 
+                                          warn.dropped = TRUE)
+}
+
+# speciesDBR
+res_pgls_spp <- pgls(speciesDBR ~ scale_area + scale_pc1 + scale_pc2 + 
+                     scale_pc3 + scale_nbprec + scale_nbtemp, lambda = "ML",
+                     data = comp_dat)
+
+res_pgls_trees_spp <- list()
+for (i in 1:length(comp_dat_trees)) {
+  res_pgls_trees_spp[[i]] <- pgls(speciesDBR ~ scale_area + scale_pc1 +
+                                  scale_pc2 + scale_pc3 + scale_nbprec + 
+                                  scale_nbtemp, lambda = "ML",
+                                  data = comp_dat_trees[[i]])
+}
+
+# genusDBR
+res_pgls_gen <- pgls(genusDBR ~ scale_area + scale_pc1 + scale_pc2 + 
+                     scale_pc3 + scale_nbprec + scale_nbtemp, lambda = "ML",
+                     data = comp_dat)
+
+res_pgls_trees_gen <- list()
+for (i in 1:length(comp_dat_trees)) {
+  res_pgls_trees_gen[[i]] <- pgls(genusDBR ~ scale_area + scale_pc1 +
+                                  scale_pc2 + scale_pc3 + scale_nbprec + 
+                                  scale_nbtemp, lambda = "ML",
+                                  data = comp_dat_trees[[i]])
+}
+
+# familyDBR
+res_pgls_fam <- pgls(familyDBR ~ scale_area + scale_pc1 + scale_pc2 + 
+                     scale_pc3 + scale_nbprec + scale_nbtemp, lambda = "ML",
+                     data = comp_dat)
+
+res_pgls_trees_fam <- list()
+for (i in 1:length(comp_dat_trees)) {
+  res_pgls_trees_fam[[i]] <- pgls(familyDBR ~ scale_area + scale_pc1 +
+                                  scale_pc2 + scale_pc3 + scale_nbprec + 
+                                  scale_nbtemp, lambda = "ML",
+                                  data = comp_dat_trees[[i]])
+}
+
+# orderDBR
+res_pgls_ord <- pgls(orderDBR ~ scale_area + scale_pc1 + scale_pc2 + 
+                     scale_pc3 + scale_nbprec + scale_nbtemp, lambda = "ML",
+                     data = comp_dat)
+
+res_pgls_trees_ord <- list()
+for (i in 1:length(comp_dat_trees)) {
+  res_pgls_trees_ord[[i]] <- pgls(orderDBR ~ scale_area + scale_pc1 +
+                                  scale_pc2 + scale_pc3 + scale_nbprec + 
+                                  scale_nbtemp, lambda = "ML",
+                                  data = comp_dat_trees[[i]])
+}
+
+# classDBR
+res_pgls_cla <- pgls(classDBR ~ scale_area + scale_pc1 + scale_pc2 + 
+                     scale_pc3 + scale_nbprec + scale_nbtemp, lambda = "ML",
+                     data = comp_dat)
+
+res_pgls_trees_cla <- list()
+for (i in 1:length(comp_dat_trees)) {
+  res_pgls_trees_cla[[i]] <- pgls(classDBR ~ scale_area + scale_pc1 +
+                                  scale_pc2 + scale_pc3 + scale_nbprec + 
+                                  scale_nbtemp, lambda = "ML",
+                                  data = comp_dat_trees[[i]])
+}
+
+stats_pgls <- function(data, data_trees) {
+  
+  final <- as.data.frame(matrix(ncol = 5, nrow = 6))
+  for (i in 2:7) {
+    
+    for (j in 1:4) {
+      
+      stats <- numeric()
+      for (k in 1:length(data_trees)) {
+        stats[k] <- summary(data_trees[[k]])$coefficients[i, j]
+      }
+
+      range <- paste0("(", round(min(stats), 3), "-", round(max(stats), 3), ")")
+
+      final[i-1, j] <- paste0(round(summary(data)$coefficients[i, j], 3), 
+                              " ", range)
+
+    }
+
+    if (i == 7) {
+      stats <- numeric()
+      for (k in 1:length(data_trees)) {
+        stats[k] <- summary(data_trees[[k]])$r.squared
+      }
+      
+      range <- paste0("(", round(min(stats), 3), "-", round(max(stats), 3), ")")
+
+      final[1, 5] <- paste0(round(summary(data)$r.squared, 3), 
+                            " ", range)
+
+    }
+
+  }
+
+  final <- cbind(rownames(summary(data)$coefficients)[2:7], final)
+  colnames(final) <- c("Coefficient", colnames(summary(data)$coefficients),
+                       "R_squared")
+
+  return(final)
+}
+
+res_pgls <- data.frame(
+  rbind(cbind(DBR = "speciesDBR", stats_pgls(res_pgls_spp, res_pgls_trees_spp)),
+        cbind(DBR = "genusDBR", stats_pgls(res_pgls_gen, res_pgls_trees_gen)),
+        cbind(DBR = "familyDBR", stats_pgls(res_pgls_fam, res_pgls_trees_fam)),
+        cbind(DBR = "orderDBR", stats_pgls(res_pgls_ord, res_pgls_trees_ord)),
+        cbind(DBR = "classDBR", stats_pgls(res_pgls_cla, res_pgls_trees_cla))))
+
+write.csv(res_pgls, "tables/new/Table2_unformatted.csv")
 
 
-
-
-
-
-library("RColorBrewer")
-my_cols <- c(brewer.pal(8, "Set2"), 
-             brewer.pal(12, "Paired"), 
-             brewer.pal(8, "Dark2"), 
-             brewer.pal(3, "Accent"),
-             brewer.pal(8, "Set1"))
-
-DBR_full  %>% 
-  ggplot(aes(x = KBGenus_Sp, y = N_feeds, fill = Class)) + ylab('Proportion of feeds on host')+ xlab('Species') +
-  geom_bar(position = "fill", stat="identity") +coord_flip() + theme_bw() + #+guides(fill=FALSE)
-  scale_fill_manual('Hosts', values = my_cols) 
-#+ coord_polar("y", start=0) # theme(axis.text.x = element_text(angle = 90)) 
-
-
-### Table with % of feed of each class ####
-DBR_full$Class <- as.factor(DBR_full$Class)
-percentage_classDBR <- DBR_full %>% dplyr::select(KBGenus_Sp, Class, N_feeds) %>% 
-  group_by(KBGenus_Sp, Class) %>% summarise(N_feeds2 = sum(N_feeds))  %>%
-  group_by(KBGenus_Sp) %>% mutate(totalfeeds = round(N_feeds2/sum(N_feeds2)*100, 2)) %>% 
-  dplyr::select(-N_feeds2) %>%
-  pivot_wider(KBGenus_Sp, names_from = Class, values_from = totalfeeds, 
-              values_fill = 0)
-
-
-
-
-
-DBR_full$Family <- as.factor(DBR_full$Family)
-DBR_full$Family <- forcats::fct_explicit_na(DBR_full$Family)
-
-percentage_famDBR <- DBR_full %>% dplyr::select(KBGenus_Sp, Family, N_feeds) %>% 
-  group_by(KBGenus_Sp, Family) %>% summarise(N_feeds2 = sum(N_feeds))  %>%
-  group_by(KBGenus_Sp) %>% mutate(totalfeeds = round(N_feeds2/sum(N_feeds2)*100, 2)) %>% 
-  dplyr::select(-N_feeds2) %>%
-  pivot_wider(KBGenus_Sp, names_from = Family, values_from = totalfeeds, 
-              values_fill = 0)
-
-percentage_famDBR
-
-write.csv(percentage_classDBR, "Table1a_MainText.csv") ##Writing the table##
-write.csv(percentage_famDBR, "Table1b_MainText.csv")
-
-
-
-
-
-
-### ~~~ Analysing human blood feeding vs niche ~~~ ####
-percHuman <- data.frame(species = percentage_famDBR$KBGenus_Sp,
-                        Human_perc = percentage_famDBR$`Human Homininae`)
-
-humandt <- inner_join(complete_DBRareanichehyper_dt_FULL, percHuman)
-
-ggplot(humandt, aes(x = genusDBR, y = Human_perc)) + 
-  geom_point() +
-  geom_smooth(se = FALSE, method = "gam")
