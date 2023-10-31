@@ -20,6 +20,8 @@ library(correlation)
 library(phylosignal)
 library(phylobase)
 library(caper)
+library(ggtree)
+library(deeptime)
 
 data <- read.csv("data/MasterTable11.csv", strip.white = TRUE, 
                  na.strings = c("", "NA"), stringsAsFactors = TRUE)
@@ -73,7 +75,6 @@ dietbreadthdtnoNA <- data %>%
             classDBR = n_distinct(Class, na.rm = TRUE)) %>%
   ungroup()
 
-# cleaning to remove T. rubrofasciata that is wrong 
 dietbreadthdt_clean <- dietbreadthdt %>% ungroup() %>% 
   dplyr::select(species = KBGenus_Sp,
                 speciesDBR,
@@ -81,7 +82,7 @@ dietbreadthdt_clean <- dietbreadthdt %>% ungroup() %>%
                 familyDBR,
                 orderDBR,
                 classDBR) %>%
-  na.omit() #%>% filter(species != "Triatoma rubrofasciata")
+  na.omit()
 
 dietbreadthdtnoNA_clean <- dietbreadthdtnoNA %>% ungroup() %>% 
   dplyr::select(species = KBGenus_Sp,
@@ -90,11 +91,34 @@ dietbreadthdtnoNA_clean <- dietbreadthdtnoNA %>% ungroup() %>%
                 familyDBR,
                 orderDBR,
                 classDBR) %>%
-  na.omit() #%>% filter(species != "Triatoma rubrofasciata")
+  na.omit()
 
 genus_name_unique <- as.list(unique(sub('(^\\w+)\\s.+', '\\1', dietbreadthdt$KBGenus_Sp)))
 species_name_unique <- as.list(unique(sub('(^\\w+)\\s(+)', '\\2', dietbreadthdt$KBGenus_Sp)))
 species_name_unique <- unique(levels(dietbreadthdt$KBGenus_Sp))
+
+# calculating percentages of each host
+dietbreadth_perc <- data %>%
+  dplyr::select(KBTribe:Country, Lat:Host_genus, N_feeds) %>%
+  group_by(species = KBGenus_Sp, host_family = Family) %>% 
+  summarise(feeds = sum(N_feeds, na.rm = TRUE)) %>% 
+  droplevels()
+
+# Figure 2
+pdf("figures/Figure2_unformatted.pdf", height = 10)
+dietbreadth_perc %>% 
+  filter(!is.na(host_family)) %>%
+  ggplot(aes(x = species, y = feeds, fill = host_family)) + 
+  ylab("Proportion of diet") +
+  geom_bar(position = "fill", stat = "identity") + 
+  coord_flip() + 
+  theme_bw(base_line_size = 0, base_rect_size = 0) +
+  guides(fill = FALSE) + 
+  scale_fill_viridis(discrete = TRUE) +
+  theme(legend.position = "none") + 
+  geom_text(aes(y = feeds, label = toupper(as.character(host_family))), 
+            size = 2, position = position_fill(vjust = 0.5), color = "white")
+dev.off()
 
 gbif_taxon_keys <- matrix(ncol = 2, nrow = length(species_name_unique))
 gbif_taxon_keys[, 1] <- species_name_unique
@@ -153,7 +177,7 @@ gbif_data_clean2 <- gbif_data_clean2 %>% dplyr::select(longitude, latitude,
 # need to remove all NA's or function will not work
 gbif_data_clean2 <- na.omit(gbif_data_clean2) %>% droplevels(.)
 
-write.csv(gbif_data_clean2, "data/Full_GBIF_data.csv")
+write.csv(gbif_data_clean2, "data/Full_GBIF_data.csv", row.names = F)
 #gbif_data_clean2 <- read.csv("data/Full_GBIF_data.csv") 
 
 # species into polygons
@@ -163,6 +187,40 @@ clim.current <- raster::getData("worldclim", var = "bio", res = 10)
 # raster with the same dimensions as above
 r <- raster(nrows = 900, ncols = 2160, ymn = -60, vals = 1:(2160*900))
 
+# annual actual evapotranspiration
+aet <- raster("data/aet2.tif") # 21600 x 43200
+aet_ras <- resample(aet, r)
+#save(aet_ras, file = "data/aet_ras_resampled.RData")
+#load(file = "data/aet_ras_resampled.RData")
+
+# annual aridity index
+ai <- raster("data/ai2.tif")
+ai_ras <- resample(ai, r)
+#save(ai_ras, file = "data/ai_ras_resampled.RData")
+#load(file = "data/ai_ras_resampled.RData")
+
+# Priestley-Taylor alpha coefficient
+alpha <- raster("data/alpha2.tif")
+alpha_ras <- resample(alpha, r)
+#save(alpha_ras, file = "data/alpha_ras_resampled.RData")
+#load(file = "data/alpha_ras_resampled.RData")
+
+# annual potential evapotranspiration
+etyr <- raster("data/etyr2.tif")
+etyr_ras <- resample(etyr, r)
+#save(etyr_ras, file = "data/etyr_ras_resampled.RData")
+#load(file = "data/etyr_ras_resampled.RData")
+
+# net primary productivity 
+npp <- raster("data/npp08.18.tif")
+npp_ras <- resample(npp, r)
+#save(npp_ras, file = "data/npp_ras_resampled.RData")
+#load(file = "data/npp_ras_resampled.RData")
+
+clim.current2 <- stack(clim.current, aet_ras, ai_ras, alpha_ras, etyr_ras,
+                       npp_ras)
+env_vals <- raster::extract(clim.current2, 1:length(r[]))  
+
 # SDM modelling 
 sdm_rf_manual <- function(data, 
                           mtry = c(3, 4, 5), 
@@ -171,8 +229,9 @@ sdm_rf_manual <- function(data,
                           split_prop = 0.75) {
   outputlist <- list()
   # defining the extent of latin america + USA
-  LatAm.ext <- raster::extent(-125, -28, -70, 48) 
+  #LatAm.ext <- raster::extent(-125, -28, -70, 48) 
   geo_data2 <- data
+  
   # selecting coordinates 
   sp.occ <- cbind.data.frame(geo_data2$longitude, geo_data2$latitude)
   
@@ -180,13 +239,13 @@ sdm_rf_manual <- function(data,
   presence <- cbind(sp.occ, status = 1)
   colnames(presence)[1:3] <- c("lon", "lat", "status")
   
-  absence <- cbind(randomPoints(LatAm_clim, (nrow(presence)*10)), status = 0)
+  absence <- cbind(randomPoints(clim.current2, (nrow(presence)*10)), status = 0)
   colnames(absence)[1:3] <- c("lon", "lat", "status")
   
   presabs <- rbind(presence, absence)
   
   # extracting environmental variables in df format
-  climdt <- cbind(presabs[3], raster::extract(LatAm_clim, presabs[-3]))
+  climdt <- cbind(presabs[3], raster::extract(clim.current2, presabs[-3]))
   climdt$status <- as.factor(climdt$status)
   climdt <- na.omit(climdt)
   
@@ -204,8 +263,10 @@ sdm_rf_manual <- function(data,
   climdt_cv <- vfold_cv(climdt_train)
   
   # define the recipe, which consists of the formula (outcome ~ predictors)
-  rec <- recipe(status ~ bio1 + bio4 + bio7 + bio12 + bio15,
-                data = climdt_train)
+  rec <- recipe(status ~ bio1 + bio2 + bio3 + bio4 + bio5 + bio6 + bio7 + 
+                bio8 + bio9 + bio10 + bio11 + bio12 + bio13 + bio14 + bio15 +
+                bio16 + bio17 + bio18 + bio19 + aet2 + ai2 + alpha2 + etyr2 + 
+                npp08.18, data = climdt_train)
 
   climdt_recipe <- rec %>%
     step_impute_knn(all_predictors()) %>%
@@ -268,15 +329,16 @@ sdm_rf_manual <- function(data,
   
   # fitting and using the final model 
   final_model <- fit(rf_workflow, climdt) # full dataset used for the split
-  
-  # predicting across the entire Latin America + USA
-  # Latin America climate data (entire region for prediction)
-  sdmpred_clim <- na.omit(data.frame(raster::extract(LatAm_clim, LatAm.ext)))
-  coord_clim <- data.frame(coordinates(LatAm_clim),
-                           ifelse(!is.na(raster::extract(LatAm_clim, LatAm.ext)) == FALSE, NA, 1)) %>%
-    na.omit() %>% select(x, y)
-  
+    
   # prediction
+
+  sdmpred_clim <- na.omit(data.frame(raster::extract(clim.current2, 1:length(r[]))))
+  
+  coord_clim <- data.frame(coordinates(clim.current2),
+                           ifelse(!is.na(raster::extract(clim.current2, 1:length(r[]))) == FALSE, NA, 1)) %>%
+    na.omit() %>% 
+    dplyr::select(x, y)
+  
   species_dist <- data.frame(coord_clim, 
                              dist = predict(final_model, 
                                             new_data = sdmpred_clim,
@@ -285,7 +347,7 @@ sdm_rf_manual <- function(data,
   
   species_dist_final <- species_dist %>% filter(.pred_1 >= threshold)
   
-  # creating Spatial objects to return
+  # creating spatial objects to return
   spatial_presence <- SpatialPoints(coords = cbind(presence$lon, presence$lat),
                                     proj4string = CRS("+init=epsg:4326"))
   
@@ -305,16 +367,23 @@ sdm_rf_manual <- function(data,
 
 }
 
-# DO NOT RUN! too long (1.438433 hours) load data above:
+# DO NOT RUN! too long (2.533304 hours) - load the data below:
 sdm_model_fulldt <- gbif_data_clean2 %>% 
-  select(-country) %>% 
+  dplyr::select(-country) %>% 
   nest(data = -species) %>%
   mutate(sdm = purrr::map(data, ~sdm_rf_manual(.x))) 
     #There were issues with some computations   A: x7
-    #There were issues with some computations   A: x5
     #There were issues with some computations   A: x3
+    #There were issues with some computations   A: x2
+    #There were issues with some computations   A: x2
     #There were issues with some computations   A: x1
     #There were issues with some computations   A: x1
+    #There were issues with some computations   A: x2
+    #Warning message:
+    #There was 1 warning in `mutate()`.
+    #ℹ In argument: `sdm = purrr::map(data, ~sdm_rf_manual(.x))`.
+    #Caused by warning in `CPL_crs_from_input()`:
+    #! GDAL Message 1: +init=epsg:XXXX syntax is deprecated. It might return a CRS with a non-EPSG compliant axis order.
 
 #save(sdm_model_fulldt, file = "data/sdm_model_fulldt.RData")
 #load(file = "data/sdm_model_fulldt.RData")
@@ -385,7 +454,11 @@ worldmap <- ne_countries(scale = "medium", type = "map_units",
                                                            "north america",
                                                            "central america"))
 
-pdf("figures/ras.pdf", width = 12, height = 6)
+pal1 <- c("#fbe6c5", "#f5ba98", "#ee8a82", "#dc7176", "#c8586c", "#9c3f5d",
+          "#70284a")
+
+# Figure S1
+pdf("figures/FigureS1.pdf", width = 12, height = 6)
 for (i in 1:length(unique(gbif_data_clean2_sf$species))) {
   spp <- unique(gbif_data_clean2_sf$species)[i]
 
@@ -394,14 +467,17 @@ for (i in 1:length(unique(gbif_data_clean2_sf$species))) {
     xlim(-180, 0) + 
     geom_sf(data = gbif_data_clean2_sf %>% filter (species == spp)) + 
     theme_void() +
-    labs(title = spp)
+    labs(title = spp) +
+    theme(plot.title = element_text(face = "italic"))
 
   ras <- ggplot() +
     geom_sf(data = worldmap, color = "gray", fill = "lightgray") +
-    geom_raster(data = ((points_obj %>% filter (species == spp) %>% select(points_obj_df))$points_obj_df[[1]]), 
+    geom_raster(data = ((points_obj %>% 
+                         filter (species == spp) %>% 
+                         dplyr::select(points_obj_df))$points_obj_df[[1]]), 
                 aes(x = x, y = y, fill = layer)) +
     xlim(-180, 0) + 
-    scale_fill_viridis(name = "pred_prob") + 
+    scale_fill_gradientn(colors = pal1, name = "Prediction probability") + 
     theme_void() 
 
   final <- wrap_plots(occ, ras)
@@ -433,43 +509,6 @@ dietbreadthdtnoNA_clean <- dietbreadthdtnoNA_clean %>%
 
 # join area with DBR
 areaDBR_fulldt <- area_model_fulldt %>% inner_join(., dietbreadthdt_clean, by = 'species') 
-
-# raster with the same dimensions as above
-r <- raster(nrows = 900, ncols = 2160, ymn = -60, vals = 1:(2160*900))
-
-# annual actual evapotranspiration
-aet <- raster("data/aet2.tif") # 21600 x 43200
-aet_ras <- resample(aet, r)
-#save(aet_ras, file = "data/aet_ras_resampled.RData")
-#load(file = "data/aet_ras_resampled.RData")
-
-# annual aridity index
-ai <- raster("data/ai2.tif")
-ai_ras <- resample(ai, r)
-#save(ai_ras, file = "data/ai_ras_resampled.RData")
-#load(file = "data/ai_ras_resampled.RData")
-
-# Priestley-Taylor alpha coefficient
-alpha <- raster("data/alpha2.tif")
-alpha_ras <- resample(alpha, r)
-#save(alpha_ras, file = "data/alpha_ras_resampled.RData")
-#load(file = "data/alpha_ras_resampled.RData")
-
-# annual potential evapotranspiration
-etyr <- raster("data/etyr2.tif")
-etyr_ras <- resample(etyr, r)
-#save(etyr_ras, file = "data/etyr_ras_resampled.RData")
-#load(file = "data/etyr_ras_resampled.RData")
-
-# net primary productivity 
-npp <- raster("data/npp08.18.tif")
-npp_ras <- resample(npp, r)
-#save(npp_ras, file = "data/npp_ras_resampled.RData")
-#load(file = "data/npp_ras_resampled.RData")
-
-clim.current2 <- stack(clim.current, aet_ras, ai_ras, alpha_ras, etyr_ras,
-                       npp_ras)
-env_vals <- raster::extract(clim.current2, 1:length(r[]))  
 
 # predicted niche 
 
@@ -542,10 +581,10 @@ predicted_nichebreadth_fulldt <- sdm_model_fulldt %>%
 area_niche_DBR_fulldt <- areaDBR_fulldt %>% 
   inner_join(., predicted_nichebreadth_fulldt, by = "species")
 
-write.csv(area_niche_DBR_fulldt, "data/final_data_25oct23.csv", row.names = F)
+write.csv(area_niche_DBR_fulldt, "data/final_data_30oct23.csv", row.names = F)
 
 # laoding again in a different format
-area_niche_DBR_fulldt <- read.csv("data/final_data_25oct23.csv")
+area_niche_DBR_fulldt <- read.csv("data/final_data_30oct23.csv")
 
 # loading phylogenies (MCC and 1000 random trees from posterior distribution)
 tree <- read.nexus("data/tr_cal_f.tre")
@@ -564,50 +603,36 @@ for (i in 1:1000) {
                                                     area_niche_DBR_fulldt_clean$species))
 }
 
-# calculating percentages of each host
-dietbreadth_perc <- data %>% 
-  filter(KBGenus_Sp %in% stri_replace_all_fixed(area_niche_DBR_fulldt_clean$species, "_", " ")) %>%
-  dplyr::select(KBTribe:Country, Lat:Host_genus, N_feeds) %>%
-  group_by(species = KBGenus_Sp, host_family = Family) %>% 
-  summarise(feeds = sum(N_feeds, na.rm = TRUE)) %>%
-  filter(species %in% area_model_fulldt$species) %>% 
-  droplevels()
-
-pdf("figures/new/Fig1.pdf", height = 10)
-dietbreadth_perc %>% 
-  filter(!is.na(host_family)) %>%
-  ggplot(aes(x = species, y = feeds, fill = host_family)) + ylab("Proportion of diet") +
-  geom_bar(position = "fill", stat = "identity") + 
-  coord_flip() + 
-  theme_bw(base_line_size = 0, base_rect_size = 0) +
-  guides(fill = FALSE) + 
-  scale_fill_viridis(discrete = TRUE) +
-  theme(legend.position = "none") + 
-  #theme(legend.position = "right", legend.direction = "vertical")
-  geom_text(aes(y = feeds, label = toupper(as.character(host_family))), size = 2, position = position_fill(vjust = 0.5), color = "white")
-dev.off()
-
-######################## FIGURE PHYLOGENY
-
-pdf("figures/Fig1_scale.pdf")
+# Figure 1
+pdf("figures/Figure1_scale.pdf")
 revts(ggtree(tree, layout = "fan", open.angle = 180, ladderize = F) + geom_tiplab(size = 1.6)) +
   coord_geo_polar(dat = "epochs", lwd = NULL) +
   scale_x_continuous(breaks = seq(-60, 0, 10), labels = abs(seq(-60, 0, 10)))
 dev.off()
 
-DBR_area <- dat[, c("speciesDBR", "area")]
+DBR_area <- area_niche_DBR_fulldt_clean[, c("speciesDBR", "area_sdm")]
+rownames(DBR_area) <- area_niche_DBR_fulldt_clean$species
 DBR_area <- DBR_area[tree$tip.label, ]
 DBR_area_norm <- DBR_area
 DBR_area_norm$speciesDBR <- DBR_area_norm$speciesDBR/max(DBR_area_norm$speciesDBR)
-DBR_area_norm$area <- DBR_area_norm$area/max(DBR_area_norm$area)
+DBR_area_norm$area_sdm <- DBR_area_norm$area_sdm/max(DBR_area_norm$area_sdm)
 
 h <- max(nodeHeights(tree))
 m <- ncol(DBR_area)
-cols <- wes_palette("FantasticFox1")[c(2, 4)]
+cols <- c("#004041",
+          "#006D6C",
+          "#39b185",
+          "#9ccb86",
+          "#e9e29c",
+          "#eeb479",
+          "#e88471",
+          "#FFB3D6",
+          "#cf597e",
+          "#780037")[10:1] # temporary colors
 xlim <- ylim <- 1.4 * c(-h, h) + c(-1, 1) * 0.1 * m * h + 0.02 * c(-h, h)
 ylim <- c(0, ylim[2])
 
-pdf("figures/Fig1_tree.pdf", width = 10)
+pdf("figures/Figure1_tree.pdf", width = 10)
 plotTree(tree, type = "fan", lwd = 1, xlim = xlim, ylim = ylim, ftype = "i",
          fsize = 0.5, part = 0.5)
 for (i in 1:ncol(DBR_area_norm)) {
@@ -627,7 +652,7 @@ for (i in 1:ncol(DBR_area_norm)) {
     plotTree(tt, color = "transparent", type = "fan", xlim = xlim, ylim = ylim,
              lwd = 1, ftype = "off", add = TRUE, part = 0.5)
     
-    pp2 <-get("last_plot.phylo", envir = .PlotPhyloEnv)
+    pp2 <- get("last_plot.phylo", envir = .PlotPhyloEnv)
     par(lend = 1)
     for(j in 1:Ntip(tree)){
         ii <- which(rownames(DBR_area_norm) == tree$tip.label[j])
@@ -651,8 +676,6 @@ text(rep(min(xx2), m), yy, paste(formatC(apply(DBR_area, 2 , max, na.rm = T),
                  c("species", expression(km^2)), sep = " "), 
                  cex = 0.8, pos = 2)
 dev.off()
-
-########################
 
 # analyses
 
@@ -685,10 +708,14 @@ fulldt_analyses <- cbind(area_niche_DBR_fulldt_clean[, c("species", "area_sdm",
                         pca$x[, 1:3])
 
 # verify if there is collinearity amog variables (OK)
-result <- correlation(fulldt_analyses)
+result <- correlation(fulldt_analyses[, c("species", "area_sdm",
+                                          "temp_niche_breadth",
+                                          "prec_niche_breadth",
+                                          "PC1", "PC2", "PC3")])
 s <- summary(result)
 
-pdf("figures/new/FigS1.pdf", width = 10)
+# Figure S2
+pdf("figures/FigureS2.pdf", width = 10)
 plot(s)
 dev.off()
 
@@ -770,7 +797,7 @@ for (i in 1:nrow(res_phylosig2)) {
 res_phylosig_final <- do.call(cbind, res_phylosig2)
 rownames(res_phylosig_final) <- rownames(res_phylosig2)
 
-write.csv(res_phylosig_final, "tables/new/Table1_unformatted.csv")
+write.csv(res_phylosig_final, "tables/Table1_unformatted.csv")
 
 # pgls
 
@@ -926,6 +953,177 @@ res_pgls <- data.frame(
         cbind(DBR = "orderDBR", stats_pgls(res_pgls_ord, res_pgls_trees_ord)),
         cbind(DBR = "classDBR", stats_pgls(res_pgls_cla, res_pgls_trees_cla))))
 
-write.csv(res_pgls, "tables/new/Table2_unformatted.csv")
+write.csv(res_pgls, "tables/Table2_unformatted.csv")
 
+# Figure 3
+
+fulldt_analyses_plot <- fulldt_analyses %>% 
+  pivot_longer(cols = c(speciesDBR, genusDBR, familyDBR, orderDBR, classDBR),
+               names_to = "DBR")
+
+abline <- data.frame(
+  DBR = c("speciesDBR", "genusDBR", "familyDBR", "orderDBR", "classDBR"),
+  Z = c(summary(res_pgls_spp)$coefficients[1, 1],
+        summary(res_pgls_gen)$coefficients[1, 1],
+        summary(res_pgls_fam)$coefficients[1, 1],
+        summary(res_pgls_ord)$coefficients[1, 1],
+        summary(res_pgls_cla)$coefficients[1, 1]),
+  Slope_area = c(summary(res_pgls_spp)$coefficients[2, 1],
+                 summary(res_pgls_gen)$coefficients[2, 1],
+                 summary(res_pgls_fam)$coefficients[2, 1],
+                 summary(res_pgls_ord)$coefficients[2, 1],
+                 summary(res_pgls_cla)$coefficients[2, 1]),
+  Slope_PC1 = c(summary(res_pgls_spp)$coefficients[3, 1],
+                summary(res_pgls_gen)$coefficients[3, 1],
+                summary(res_pgls_fam)$coefficients[3, 1],
+                summary(res_pgls_ord)$coefficients[3, 1],
+                summary(res_pgls_cla)$coefficients[3, 1]),
+  Slope_PC2 = c(summary(res_pgls_spp)$coefficients[4, 1],
+                summary(res_pgls_gen)$coefficients[4, 1],
+                summary(res_pgls_fam)$coefficients[4, 1],
+                summary(res_pgls_ord)$coefficients[4, 1],
+                summary(res_pgls_cla)$coefficients[4, 1]),
+  Slope_PC3 = c(summary(res_pgls_spp)$coefficients[5, 1],
+                summary(res_pgls_gen)$coefficients[5, 1],
+                summary(res_pgls_fam)$coefficients[5, 1],
+                summary(res_pgls_ord)$coefficients[5, 1],
+                summary(res_pgls_cla)$coefficients[5, 1]),
+  Slope_PNB = c(summary(res_pgls_spp)$coefficients[6, 1],
+                summary(res_pgls_gen)$coefficients[6, 1],
+                summary(res_pgls_fam)$coefficients[6, 1],
+                summary(res_pgls_ord)$coefficients[6, 1],
+                summary(res_pgls_cla)$coefficients[6, 1]),
+  Slope_TNB = c(summary(res_pgls_spp)$coefficients[7, 1],
+                summary(res_pgls_gen)$coefficients[7, 1],
+                summary(res_pgls_fam)$coefficients[7, 1],
+                summary(res_pgls_ord)$coefficients[7, 1],
+                summary(res_pgls_cla)$coefficients[7, 1]))
+
+
+cols <- c("#009392", "#9ccb86", "#e9e29c", "#eeb479", "#cf597e")
+
+p1 <- ggplot(fulldt_analyses_plot) + 
+  geom_point(aes(x = scale_area, y = value, colour = DBR)) +
+  geom_abline(data = abline, 
+              aes(intercept = Z, slope = Slope_area, color = DBR), 
+              linewidth = 1) + 
+  scale_colour_manual(values = c(cols[1], cols[3], cols[4], cols[2], cols[5])) +
+  facet_grid(rows = ~factor(DBR, levels = c("classDBR", "orderDBR", "familyDBR",
+                                            "genusDBR", "speciesDBR")) ~ ., 
+             labeller = as_labeller(c("classDBR" = "Class", 
+                                      "orderDBR" = "Order", 
+                                      "familyDBR" = "Family",
+                                      "genusDBR" = "Genus",
+                                      "speciesDBR" = "Species")),
+             switch = "y") +
+  labs(x = "Range area", y = "Diet breadth") +
+  theme_light() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.position="none") +
+  guides(colour = FALSE) 
+
+p2 <- ggplot(fulldt_analyses_plot) + 
+  geom_point(aes(x = scale_pc1, y = value, colour = DBR)) +
+  geom_abline(data = abline, 
+              aes(intercept = Z, slope = Slope_PC1, color = DBR), 
+              linewidth = 1) + 
+  scale_colour_manual(values = c(cols[1], cols[3], cols[4], cols[2], cols[5])) +
+  facet_grid(rows = ~factor(DBR, levels = c("classDBR", "orderDBR", "familyDBR",
+                                            "genusDBR", "speciesDBR")) ~ .) +
+  labs(x = "PC1", y = "") + 
+  theme_light() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position="none") +
+  guides(colour = FALSE) 
+
+p3 <- ggplot(fulldt_analyses_plot) + 
+  geom_point(aes(x = scale_pc2, y = value, colour = DBR)) +
+  geom_abline(data = abline, 
+              aes(intercept = Z, slope = Slope_PC2, color = DBR), 
+              linewidth = 1) + 
+  scale_colour_manual(values = c(cols[1], cols[3], cols[4], cols[2], cols[5])) +
+  facet_grid(rows = ~factor(DBR, levels = c("classDBR", "orderDBR", "familyDBR",
+                                            "genusDBR", "speciesDBR")) ~ .) +
+  labs(x = "PC2", y = "") + 
+  theme_light() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position="none") +
+  guides(colour = FALSE) 
+
+p4 <- ggplot(fulldt_analyses_plot) + 
+  geom_point(aes(x = scale_pc3, y = value, colour = DBR)) +
+  geom_abline(data = abline, 
+              aes(intercept = Z, slope = Slope_PC3, color = DBR), 
+              linewidth = 1) + 
+  scale_colour_manual(values = c(cols[1], cols[3], cols[4], cols[2], cols[5])) +
+  facet_grid(rows = ~factor(DBR, levels = c("classDBR", "orderDBR", "familyDBR",
+                                            "genusDBR", "speciesDBR")) ~ .) +
+  labs(x = "PC3", y = "") + 
+  theme_light() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position="none") +
+  guides(colour = FALSE) 
+
+p5 <- ggplot(fulldt_analyses_plot) + 
+  geom_point(aes(x = scale_nbtemp, y = value, colour = DBR)) +
+  geom_abline(data = abline, 
+              aes(intercept = Z, slope = Slope_TNB, color = DBR), 
+              linewidth = 1) + 
+  scale_colour_manual(values = c(cols[1], cols[3], cols[4], cols[2], cols[5])) +
+  facet_grid(rows = ~factor(DBR, levels = c("classDBR", "orderDBR", "familyDBR",
+                                            "genusDBR", "speciesDBR")) ~ .) +
+  labs(x = "TNB", y = "") + 
+  theme_light() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position="none") +
+  guides(colour = FALSE) 
+
+p6 <- ggplot(fulldt_analyses_plot) + 
+  geom_point(aes(x = scale_nbprec, y = value, colour = DBR)) +
+  geom_abline(data = abline, 
+              aes(intercept = Z, slope = Slope_PNB, color = DBR), 
+              linewidth = 1) + 
+  scale_colour_manual(values = c(cols[1], cols[3], cols[4], cols[2], cols[5])) +
+  facet_grid(rows = ~factor(DBR, levels = c("classDBR", "orderDBR", "familyDBR",
+                                            "genusDBR", "speciesDBR")) ~ .) +
+  labs(x = "PNB", y = "") + 
+  theme_light() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position="none") +
+  guides(colour = FALSE) 
+
+pdf("figures/Figure3.pdf", width = 11)
+wrap_plots(p1, p2, p3, p4, p5, p6, ncol = 6)
+dev.off()
 
