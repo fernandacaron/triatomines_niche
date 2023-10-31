@@ -177,8 +177,9 @@ gbif_data_clean2 <- gbif_data_clean2 %>% dplyr::select(longitude, latitude,
 # need to remove all NA's or function will not work
 gbif_data_clean2 <- na.omit(gbif_data_clean2) %>% droplevels(.)
 
+# Table S1
 write.csv(gbif_data_clean2, "data/Full_GBIF_data.csv", row.names = F)
-#gbif_data_clean2 <- read.csv("data/Full_GBIF_data.csv") 
+#gbif_data_clean2 <- read.csv("data/Full_GBIF_data.csv")
 
 # species into polygons
 # query current environmental data for our location
