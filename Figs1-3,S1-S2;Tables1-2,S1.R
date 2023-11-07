@@ -440,8 +440,13 @@ raster_obj <- sdm_model_fulldt %>%
   group_by(species) %>% 
   slice(4) %>% 
   ungroup() %>% 
-  mutate(raster_obj = purrr::map(sdm, ~raster_obj(.x))) %>% 
-  dplyr::select(-sdm)
+  mutate(sdm_threshold = purrr::map(sdm, function(.x, threshold = 0.5) {
+    .x@data[.x@data < threshold] <- NA
+    .x
+  })) %>% 
+  dplyr::select(-sdm) %>%
+  mutate(raster_obj = purrr::map(sdm_threshold, ~raster_obj(.x))) %>% 
+  dplyr::select(-sdm_threshold)
 
 points_obj <- raster_obj %>%
   mutate(points_obj = purrr::map(raster_obj, ~rasterToPoints(.x))) %>% 
